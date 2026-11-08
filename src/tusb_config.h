@@ -42,7 +42,7 @@
 #ifdef CFG_TUD_CDC
 #undef CFG_TUD_CDC
 #endif
-#define CFG_TUD_CDC             1   // expose three CDC interfaces
+#define CFG_TUD_CDC             1   // expose one CDC interface
 
 #ifdef CFG_TUD_MSC
 #undef CFG_TUD_MSC
