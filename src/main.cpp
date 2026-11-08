@@ -3,8 +3,9 @@
  * ESP32-S2 / ESP32 / ESP8266
  *
  * Role is determined during pairing:
- *   Pressed button first (initiated) → SLAVE
- *   Accepted request (confirmed)     → MASTER
+ *   All unpaired devices discover each other automatically.
+ *   Clicked to confirm a discovered candidate → MASTER
+ *   Received that master's acknowledgement  → SLAVE
  *
  * Button (EncButton):
  *   Start without pair       — immediately send PKT_PAIR
@@ -12,14 +13,17 @@
  *   hold()                   — reset pair / reject request
  *
  * LED:
- *   SEEKING  — fast blinking
+ *   SEEKING  — breathing fade
  *   CONFIRM  — double blinking
  *   Online   — steady on
- *   Offline  — rare blinking
+ *   Offline  — fast blinking; the saved pair is retained
  */
 
 #include <Arduino.h>
 #include <EncButton.h>
+#include "AirWireProtocol.h"
+
+using namespace awc;
 
 // ── Platform-dependent includes ──────────────────────────────
 #ifdef ESP8266
@@ -98,21 +102,6 @@ constexpr uint8_t PIN_DEBUG_TX = 17;
 constexpr uint8_t PIN_DEBUG_RX = 18;
 #endif
 
-// ── Protocol ──────────────────────────────────────────────────
-constexpr uint8_t PKT_DATA = 0x01;
-constexpr uint8_t PKT_PAIR = 0x02;  // broadcast: seeking pair
-constexpr uint8_t PKT_CLAIM = 0x03; // [CLAIM, myMac×6] — became master
-constexpr uint8_t PKT_ACK = 0x04;   // [ACK, baud×4] — confirmation + baud
-constexpr uint8_t PKT_UNPAIR = 0x05;
-constexpr uint8_t PKT_BAUD = 0x06; // [BAUD, baud×4]
-constexpr uint8_t PKT_PING = 0x07;
-constexpr uint8_t PKT_PONG = 0x08;
-
-// Packet sizes (for readability of len >= N conditions)
-constexpr uint8_t PKT_CLAIM_LEN = 7; // type + MAC(6)
-constexpr uint8_t PKT_ACK_LEN = 5;   // type + baud(4)
-constexpr uint8_t PKT_BAUD_LEN = 5;  // type + baud(4)
-
 // ── Timeouts and intervals (ms) ─────────────────────────────────
 constexpr uint32_t SEEK_INTERVAL = 2000;  // repeat PKT_PAIR every N ms
 constexpr uint32_t CONFIRM_TTL = 15000;   // wait for confirmation for N ms
@@ -161,20 +150,8 @@ constexpr uint8_t EEPROM_EMPTY = 0x00;  // reset indicator
 
 // ── ESP-NOW ───────────────────────────────────────────────────
 constexpr uint8_t ESPNOW_CHANNEL = 0;
-constexpr uint8_t MAC_LEN = 6;
-constexpr uint8_t DATA_MAX = 249;               // max data in one packet
-constexpr uint8_t DATA_BUF_SIZE = DATA_MAX + 1; // +1 for packet type byte
 
 // ═════════════════════════════════════════════════════════════
-
-// ── States ─────────────────────────────────────────────────
-enum State
-{
-    ST_SEEKING,
-    ST_CONFIRM,
-    ST_PAIRED_MASTER,
-    ST_PAIRED_SLAVE
-};
 
 State state = ST_SEEKING;
 uint8_t peerMac[MAC_LEN] = {};
@@ -350,19 +327,6 @@ void updateLed()
 //  Baud rate
 // ─────────────────────────────────────────────────────────────
 
-void packU32(uint8_t *buf, uint32_t val)
-{
-    buf[0] = val & 0xFF;
-    buf[1] = (val >> 8) & 0xFF;
-    buf[2] = (val >> 16) & 0xFF;
-    buf[3] = (val >> 24) & 0xFF;
-}
-
-uint32_t unpackU32(const uint8_t *buf)
-{
-    return (uint32_t)buf[0] | ((uint32_t)buf[1] << 8) | ((uint32_t)buf[2] << 16) | ((uint32_t)buf[3] << 24);
-}
-
 uint32_t snapToBaud(uint32_t raw)
 {
     uint32_t best = STD_BAUDS[0];
@@ -454,6 +418,8 @@ void espnowRemovePeer(const uint8_t *mac)
 #ifndef PLATFORM_ESP8266
     if (esp_now_is_peer_exist(mac))
         esp_now_del_peer(mac);
+#else
+    (void)mac;
 #endif
 }
 
@@ -472,7 +438,7 @@ void becomeMaster()
     espnowAddPeer(peerMac);
 
     uint32_t baud = getHostBaud();
-    currentBaud = baud;
+    applyBaud(baud);
 
     // PKT_CLAIM broadcast: notify everyone that this slave is taken
     uint8_t claim[PKT_CLAIM_LEN];
@@ -539,8 +505,12 @@ void onReceive(const uint8_t *mac, const uint8_t *data, int len)
     if (len < 1)
         return;
 
-    // Any packet from partner updates lastContact
-    if ((state == ST_PAIRED_MASTER || state == ST_PAIRED_SLAVE) && memcmp(mac, peerMac, MAC_LEN) == 0)
+    const bool fromPeer = memcmp(mac, peerMac, MAC_LEN) == 0;
+    if (!acceptsPacket(state, fromPeer, data[0], static_cast<size_t>(len)))
+        return;
+
+    // Only accepted packets from the paired device refresh link status.
+    if (isPaired(state) && fromPeer)
         lastContact = millis();
 
     switch (data[0])
@@ -638,7 +608,7 @@ void seekLoop()
 
 void confirmLoop()
 {
-    if (state != ST_SEEKING && state != ST_CONFIRM)
+    if (state != ST_CONFIRM)
         return;
     if (millis() - confirmStart >= CONFIRM_TTL)
     {
@@ -669,7 +639,7 @@ void baudLoop()
     if (baud == lastBaud)
         return;
     lastBaud = baud;
-    currentBaud = baud;
+    applyBaud(baud);
     saveState();
     uint8_t pkt[PKT_BAUD_LEN];
     pkt[0] = PKT_BAUD;
@@ -746,6 +716,7 @@ void setup()
 {
 #ifdef PLATFORM_ESP8266
     pinMode(PIN_LED, OUTPUT);
+    analogWriteRange(LED_PWM_MAX);
     analogWrite(PIN_LED, LED_PWM_MAX); // off (inverted)
 #else
     ledcSetup(LEDC_CH, LEDC_FREQ, LEDC_RES);
@@ -755,7 +726,8 @@ void setup()
 
     btn.setHoldTimeout(BTN_HOLD_MS);
 
-    Serial.begin(BAUD_DEFAULT);
+    const bool restored = loadState();
+    Serial.begin(currentBaud);
     Serial.setTimeout(10);
 
 #if HAS_NATIVE_USB
@@ -767,7 +739,6 @@ void setup()
 
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();
-    espnowAddPeer(BROADCAST);
 
 #ifdef PLATFORM_ESP8266
     if (esp_now_init() != 0)
@@ -786,7 +757,9 @@ void setup()
     esp_now_register_recv_cb(onReceive);
 #endif
 
-    if (loadState())
+    espnowAddPeer(BROADCAST);
+
+    if (restored)
     {
         espnowAddPeer(peerMac);
         lastContact = millis();
