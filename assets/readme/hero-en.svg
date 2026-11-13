@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="400" viewBox="0 0 1200 400" role="img" aria-labelledby="title desc">
+  <title id="title">AirWireCom — wireless USB–UART bridge</title>
+  <desc id="desc">ESP boards carry serial data over ESP-NOW. The host connects through native USB CDC or a USB–UART adapter. A broken cable line becomes a radio link.</desc>
+  <rect width="1200" height="400" rx="16" fill="#142522"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <g id="platforms" fill="#b9cec5" font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="23">
+      <text x="64" y="58" fill="#99e2bd">ESP-NOW</text>
+      <text x="1136" y="58" text-anchor="end">ESP32 / ESP8266</text>
+    </g>
+    <g id="identity">
+      <text x="58" y="184" fill="#f5f5ed" font-size="116" font-weight="700" letter-spacing="-5">Air<tspan fill="#99e2bd">Wire</tspan>Com</text>
+      <text x="64" y="252" fill="#f5f5ed" font-size="46" letter-spacing="-0.8">A wireless USB–UART bridge.</text>
+    </g>
+    <g id="wireless-cable" fill="none" stroke="#99e2bd" stroke-width="3" stroke-linecap="round">
+      <path d="M64 326H426m348 0h362"/>
+      <circle cx="432" cy="326" r="6"/>
+      <circle cx="768" cy="326" r="6"/>
+      <path d="M492 308q16 18 0 36m22-52q30 34 0 68m194-52q-16 18 0 36m-22-52q-30 34 0 68"/>
+      <path d="M565 326h70" stroke-dasharray="3 12" stroke="#b9cec5"/>
+    </g>
+    <g id="interfaces" fill="#b9cec5" font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="22">
+      <text x="64" y="371">USB CDC / USB–UART</text>
+      <text x="600" y="386" text-anchor="middle">2.4 GHz</text>
+      <text x="1136" y="371" text-anchor="end">UART / 3.3 V</text>
+    </g>
+  </g>
+</svg>

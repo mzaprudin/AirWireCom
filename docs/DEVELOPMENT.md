@@ -23,21 +23,23 @@ On Windows the activation command is `.venv\Scripts\Activate.ps1` in PowerShell.
 | `esp32`, `esp32_debug` | `esp32dev` | Classic ESP32 DevKit |
 | `esp8266`, `esp8266_debug` | `nodemcuv2` | ESP8266 NodeMCU |
 
+These are ready-made configurations, independent of the master/slave role. ESP32-S2 was used for testing. Other suitable ESP boards can use the same firmware with the matching PlatformIO platform and `board` setting; button, LED and RX Monitor GPIOs are set in [`src/main.cpp`](../src/main.cpp). Native USB CDC is optional: ESP32/ESP8266 can be master through a built-in or external USB–UART adapter.
+
 Ports are selected locally, with no committed COM-port setting:
 
 ```bash
 pio device list
-pio run -e s2mini -t upload --upload-port /dev/ttyACM0
-pio run -e esp8266 -t upload --upload-port /dev/ttyUSB0
+pio run -e esp32 -t upload --upload-port /dev/ttyUSB0
+pio run -e esp8266 -t upload --upload-port /dev/ttyUSB1
 ```
 
-Windows examples use `--upload-port COM8` or another detected port. S2 may enumerate with a different port after flashing. If upload cannot find it, the board's BOOT/reset procedure enters its USB bootloader.
+The example uses an ESP32 and an ESP8266; either may be master. For the S2 Mini native USB variant, use `-e s2mini` and its detected port, such as `/dev/ttyACM0`. Windows examples use `--upload-port COM8` or another detected port. S2 may enumerate with a different port after flashing. If upload cannot find it, the board's BOOT/reset procedure enters its USB bootloader.
 
 Use `_debug` environments for diagnostics. Messages use `Serial`, which is also the data port: USB CDC on S2, UART0 on ESP32/ESP8266. A terminal can be opened with `pio device monitor --port /dev/ttyACM0 --baud 115200`; on UART, the selected terminal rate must match the active rate. Close the terminal before running the loopback tool.
 
 ## Wiring
 
-The first-run setup uses an S2 master connected to the host by USB and an ESP32/ESP8266 slave connected to the target by UART.
+The host-side board can use native USB CDC or a built-in/external USB–UART adapter. The target-side board needs a UART data port for the wiring below. The board model does not assign the master/slave role; confirm the host-side board during pairing.
 
 | Signal | ESP32 slave | ESP8266 slave | Target connection |
 |---|---|---|---|
@@ -63,9 +65,9 @@ flowchart LR
 
 ## Loopback measurement
 
-The measurement path is host → S2 USB → ESP-NOW → slave UART TX → physical jumper → slave UART RX → ESP-NOW → host. It exercises the complete bidirectional data path without a target application.
+The measurement path is host → master serial port → ESP-NOW → slave UART TX → physical jumper → slave UART RX → ESP-NOW → host. The master can use native USB CDC or a USB–UART adapter. It exercises the complete bidirectional data path without a target application.
 
-1. Flash ordinary `s2mini` and `esp32`/`esp8266` firmware and pair the boards, clicking the **S2** button when it double-blinks.
+1. Flash release builds for the selected boards and pair them, clicking the **host-side board's** button when it double-blinks. For a UART master, connect RX Monitor as described above.
 2. Disconnect the target. Join **GPIO1 TX to GPIO3 RX on the slave**. Ensure its USB-UART adapter does not drive the same RX line.
 3. Record board revisions, firmware commit, distance, power and radio conditions. Install the measurement dependency in the activated environment:
 
@@ -73,7 +75,7 @@ The measurement path is host → S2 USB → ESP-NOW → slave UART TX → physic
    python -m pip install -r scripts/requirements-loopback.txt
    ```
 
-4. Run a capture, replacing board labels and notes with the actual setup:
+4. Run a capture, replacing board labels, port and notes with the actual setup. The command illustrates the S2 test board; the procedure also works with a UART master:
 
    ```bash
    python scripts/uart_loopback.py \
@@ -99,7 +101,7 @@ The example uses Bash line continuations; PowerShell can run the command on one 
 
 RTT includes both radio directions and UART echo serialization. Throughput counts each echoed byte once and uses stop-and-wait blocks; startup delay and the final tail check are excluded. It measures this workload, with a bounded timeout and observation window. Repeat runs at each chosen baud with the same payload size, chunk and seed; retain failed reports as well as successful ones. A useful result table lists board pair, baud, payload, received/verified bytes, RTT median/p95 and useful bytes/s, with links to raw JSON.
 
-For recovery checks, repeat a nondefault-baud run after rebooting the slave. Turn a peer off for over 35 seconds and confirm that the remaining board indicates offline, retains its pair and reconnects on peer return. These checks require physical boards; the repository currently provides the procedure and tool, with no recorded hardware measurements.
+For recovery checks, repeat a nondefault-baud run after rebooting the slave. Turn a peer off for over 35 seconds and confirm that the remaining board indicates offline, retains its pair and reconnects on peer return. These checks require physical boards; the repository currently provides the procedure and tool, with no published quantitative hardware measurements.
 
 ## Automated checks
 
@@ -118,9 +120,9 @@ The firmware harness needs a C++ compiler (`c++`, or `CXX` set to its path) and 
 | Symptom | Check |
 |---|---|
 | No double-blink | Button/LED GPIO and LED polarity; power both boards; hold 3 s to clear old pairs |
-| Wrong role | Clear the pair on both boards and click the host-side S2 during confirmation |
+| Wrong role | Clear the pair on both boards and click the host-side board during confirmation |
 | Paired, no returned bytes | Crossed TX/RX, common GND, correct target baud, or TX–RX jumper on slave for loopback |
 | Corrupt binary stream | Use a release build, disconnect other serial clients, check logic levels and USB-UART contention |
-| UART host speed change is missed | Check RX Monitor wiring and detection limits; use S2 for direct USB line coding |
+| UART host speed change is missed | Check RX Monitor wiring and detection limits; native USB CDC reports the requested rate directly |
 | Fast blink after about 35 s | Check peer power and radio channel; the pair remains stored |
 | Build fails after dependency changes | Use pinned versions, then `pio run -t clean` and rebuild |

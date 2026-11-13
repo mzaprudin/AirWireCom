@@ -1,54 +1,77 @@
-# AirWireCom
+<p align="center"><strong>English</strong> · <a href="README.RU.md">Русский</a></p>
 
-[Русская версия](README.RU.md)
+<h1><img src="assets/readme/hero-en.svg" width="100%" alt="AirWireCom — wireless USB–UART bridge over ESP-NOW"></h1>
 
-AirWireCom carries serial data between two ESP boards over ESP-NOW. A computer connects to the first board over USB; the second board connects to a device's UART. Both boards run the same firmware, and a button confirms which one controls the link and its baud rate.
+AirWireCom carries serial data between two **ESP boards** over **ESP-NOW**. Connect the computer through **native USB CDC or a USB–UART adapter**, and the remote board to the device's **3.3 V UART**. The bridge forwards binary data in both directions for terminals, controllers and data loggers.
+
+[First run](#first-run) · [Verification](#verification) · [Documentation](#documentation) · [MIT license](LICENSE)
+
+## How it works
 
 ```mermaid
 flowchart TD
-    PC["Computer / serial application"]
-    Master["ESP32-S2 Mini · master"]
-    Slave["ESP32 or ESP8266 · slave"]
-    Device["Device with a 3.3 V UART"]
-    PC <-->|USB CDC| Master
+    PC["Computer<br/>Serial application"]
+    Master["ESP board<br/>Master"]
+    Slave["ESP board<br/>Slave"]
+    Device["Target device<br/>3.3 V UART"]
+    PC <-->|USB CDC / USB–UART| Master
     Master <-->|ESP-NOW · 2.4 GHz| Slave
     Slave <-->|TX / RX / GND| Device
+    classDef board fill:#e1f3ec,stroke:#16735c,color:#162b24
+    classDef endpoint fill:#f4f5f2,stroke:#6b7771,color:#162b24
+    class Master,Slave board
+    class PC,Device endpoint
 ```
 
-The bridge forwards binary data in both directions, remembers the paired board across restarts, and sends baud changes from master to slave. It can replace the serial cable used by a terminal, controller, or data logger.
+Both boards run the same firmware, built for their board type. The board model does not determine its role: a button click on the host-side board chooses the master; the other board becomes the slave. The pair and baud rate survive a restart.
 
 ## Engineering decisions
 
-| Problem | Implementation | Result |
-|---|---|---|
-| Use one firmware for both ends | Discovery starts at power-on; a click on the host-side board makes it master | Roles are chosen during pairing without a separate firmware image |
-| Keep the remote UART aligned with the host | S2 reads USB CDC line coding and sends the baud as a control packet | The host application sets the remote UART speed |
-| Support different Espressif boards | Shared protocol with USB/UART, ESP-NOW and flash adapters | S2 uses native USB; ESP32 and ESP8266 use UART0 |
-| Recover a known connection | Store role, peer MAC and baud in flash; heartbeat drives the LED | Restart restores the pair and UART speed; a missing peer remains paired |
+- **One firmware, two roles.** Discovery starts at power-on. Roles are chosen during pairing, so a separate master or slave firmware image is unnecessary.
+- **Baud synchronization with either host interface.** USB CDC reports the requested speed directly; a UART master estimates it through the RX Monitor input. The master sends the speed to the slave in a control packet.
+- **A shared protocol across ESP boards.** Platform adapters handle USB/UART, ESP-NOW and flash storage. The ready-made builds cover ESP32, ESP8266 and ESP32-S2 Mini; USB CDC is optional.
+- **Pairing survives a lost connection.** Flash stores the role, peer MAC and baud rate. Peer traffic drives the status LED; a missing peer leaves the saved pair intact.
 
-Data packets carry up to **249 serial bytes**. The current protocol sends data and baud updates once, with no application retries or flow control. The [loopback tool](docs/DEVELOPMENT.md#loopback-measurement) measures received bytes, round-trip time and useful throughput on a real setup.
+### Link limits
+
+Each data packet holds up to **249 serial bytes**. UART framing is **8N1**; parity, stop-bit changes and modem-control signals are not forwarded. Data and baud updates are sent once, without application retries or flow control. Radio encryption is disabled. See [protocol and baud handling](docs/ARCHITECTURE.md) for the full behavior.
 
 ## First run
 
-The example uses an **ESP32-S2 Mini as master** and an **ESP32 DevKit or ESP8266 NodeMCU as UART slave**. On S2 the data port is USB CDC in both roles.
+Choose ESP boards with **ESP-NOW** and the serial interface needed at each end. **ESP32-S2 was used for testing**; it is not required as master. ESP32 and ESP8266 can connect to the computer through a built-in or external USB–UART adapter. For another board, select the matching build and GPIO settings in the [build guide](docs/DEVELOPMENT.md#build-and-upload).
 
-1. Install PlatformIO Core 6.2.0 as described in the [build guide](docs/DEVELOPMENT.md#build-and-upload).
-2. Build and flash each board; replace the sample ports with local device names:
+1. Install **PlatformIO Core 6.2.0** using the [build guide](docs/DEVELOPMENT.md#build-and-upload).
+2. Build and flash each board. Replace the sample ports with local device names:
 
    ```bash
-   pio run -e s2mini -t upload --upload-port /dev/ttyACM0
-   pio run -e esp8266 -t upload --upload-port /dev/ttyUSB0
+   pio run -e esp32 -t upload --upload-port /dev/ttyUSB0
+   pio run -e esp8266 -t upload --upload-port /dev/ttyUSB1
    ```
 
-   For an ESP32 slave, use `-e esp32` instead of `-e esp8266`.
+   These commands illustrate an ESP32 and an ESP8266; either can be master. For the S2 Mini native USB variant, use `-e s2mini` and its detected port, such as `/dev/ttyACM0`.
 
-3. Connect the slave's **TX GPIO1 → device RX**, **RX GPIO3 ← device TX**, and **GND → GND**. The UART uses 3.3 V logic. See the [wiring guide](docs/DEVELOPMENT.md#wiring) for LEDs, RX Monitor and USB-UART connections.
-4. Power both boards. Discovery runs automatically. When the host-side S2 LED double-blinks, click its button once. That board becomes master; the other becomes slave.
-5. Open the S2 USB serial port in the host application and select the device's baud rate. Paired boards show a steady LED while receiving peer traffic. Holding the button for **3 seconds** removes the pair.
+3. Connect the host-side board through native USB CDC or a USB–UART adapter. For a UART master, adapter TX goes to **GPIO3 and RX Monitor** (**GPIO4 on ESP32**, **GPIO14 on ESP8266**); adapter RX goes to **GPIO1**, with a shared **GND**. Native USB CDC needs no RX Monitor wire.
+
+4. Wire the slave to the target:
+
+   | Slave | Target device |
+   |---|---|
+   | TX · GPIO1 | RX |
+   | RX · GPIO3 | TX |
+   | GND | GND |
+
+   UART uses **3.3 V logic**. The [wiring guide](docs/DEVELOPMENT.md#wiring) covers LEDs, RX Monitor, level conversion and USB-UART connections.
+
+5. Power both boards. When the host-side board's LED **double-blinks**, click its button once to make it master. The other board becomes slave.
+6. Open the host-side serial port in the application and select the device's baud rate. USB CDC reports the rate directly; the UART variant detects it from transmitted data, with the [baud-detection limits](docs/ARCHITECTURE.md#baud-handling). The LED stays on while receiving peer traffic. Hold the button for **3 seconds** to remove the pair.
 
 ## Verification
 
-The repository includes host regressions that execute the firmware with simulated peripherals, tests for the measurement tool, and a CI matrix for all six release/debug environments:
+| Firmware | Loopback tool | Builds |
+|---|---|---|
+| **51** host checks | **13** Python tests | **6** environments |
+
+The host regressions execute the firmware with simulated peripherals. [Firmware CI](https://github.com/mzaprudin/AirWireCom/actions/workflows/firmware.yml) runs both test suites and builds all six environments, with firmware available as workflow artifacts.
 
 ```bash
 python3 tests/run_host_tests.py
@@ -56,10 +79,12 @@ python3 -m unittest discover -s scripts -p 'test_*.py'
 pio run
 ```
 
-Verified locally with the pinned toolchain: **all six firmware builds and both test suites pass**. The targets are `s2mini`, `esp32`, `esp8266` and their `_debug` variants. Debug messages share the serial data port; use a release build for binary traffic and measurements. The guide below describes physical measurements.
+The pinned toolchain passes all six builds and both test suites. Targets are `s2mini`, `esp32`, `esp8266` and their `_debug` variants. Debug messages share the data port; use a **release build** for binary traffic and measurements.
+
+For a real setup, the [loopback tool](docs/DEVELOPMENT.md#loopback-measurement) checks echoed bytes and measures round-trip time and useful throughput. The repository includes the procedure and tool; quantitative hardware measurements have not been published yet.
 
 ## Documentation
 
-- [Architecture and protocol](docs/ARCHITECTURE.md): pairing states, packet format, baud handling, storage and platform adapters.
-- [Build, wiring and measurements](docs/DEVELOPMENT.md): pinned toolchain, serial ports, loopback procedure and troubleshooting.
-- [Firmware](src/main.cpp) and [license](LICENSE).
+- [Architecture and protocol](docs/ARCHITECTURE.md) — pairing states, packet format, baud handling, storage and platform adapters.
+- [Build, wiring and measurements](docs/DEVELOPMENT.md) — pinned toolchain, serial ports, loopback procedure and troubleshooting.
+- [Firmware source](src/main.cpp) · [MIT license](LICENSE).
