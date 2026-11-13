@@ -113,7 +113,9 @@ git diff --check
 
 The firmware harness needs a C++ compiler (`c++`, or `CXX` set to its path) and Python 3. It compiles the actual `src/main.cpp` against fake ESP32 UART and ESP8266 peripherals. **51 checks** cover saved-state recovery, master baud changes, peer filtering, packet boundaries/codec, discovery, offline behavior, PWM and initialization order. These host checks leave USB enumeration and radio timing to physical tests. The loopback tool has **13 unit tests** for partial reads/writes, timeout, corruption, extra bytes and CLI behavior, with no serial hardware dependency.
 
-[CI](../.github/workflows/firmware.yml) runs these checks and builds all six environments. It uploads firmware artifacts for each environment.
+[CI](../.github/workflows/firmware.yml) runs these checks before building all six environments in two platform jobs. It runs on pushes to `main`, pull requests and manual dispatch; changes limited to Markdown, `docs/`, README assets or the license skip automatic runs.
+
+Toolchain caches are shared by release/debug builds and saved only from `main`. Pushes to `main` and manual runs upload two archives, `firmware-espressif32` and `firmware-espressif8266`, retained for **7 days**. Each archive keeps the BIN/ELF files in environment-named folders; PRs validate all six builds without uploading archives.
 
 ## Troubleshooting
 
